@@ -114,6 +114,8 @@ def compliance_agent(state: AgentState) -> dict:
     Calls check_organization_eligibility with a real grant ID extracted
     from research_results. Never asks for clarification — always calls
     the tool. The org name comes from user_request, not hardcoded.
+    Also passes the original search keywords so the compliance tool
+    can cross-reference grants using the same terms.
     """
     response = llm_with_compliance_tools.invoke(
         [
@@ -122,7 +124,8 @@ Call check_organization_eligibility exactly once right now.
 Do not ask questions. Do not explain. Just call the tool.
 Use the organization name from the user request.
 Use the first numeric Grant ID you find in the research results.
-If no ID is found, use 347329 as the default."""),
+If no ID is found, use 347329 as the default.
+For search_keywords, extract the core topic from the user request (e.g., 'renewable energy', 'healthcare research')."""),
             HumanMessage(content=f"User request: {state['user_request']}\n\nResearch results:\n{state['research_results']}")
         ],
         config={"run_name": "compliance_agent", "tags": ["compliance", "tool-calling"], "metadata": {"agent": "compliance", "step": 3}},
@@ -156,40 +159,167 @@ State the eligibility status, SAM.gov registration findings, and concrete next s
     }
 
 
+def _parse_grants(research_text: str) -> list:
+    """
+    Extracts structured grant data from the research_synthesizer's text output.
+    Returns a list of dicts with id, title, agency, close_date, award_ceiling, fit.
+    """
+    grants = []
+    current = {}
+    for line in research_text.split("\n"):
+        line = line.strip()
+        if line.startswith("Grant ID:"):
+            if current.get("id"):
+                grants.append(current)
+            current = {"id": line.split(":", 1)[1].strip(), "selected": True}
+        elif line.startswith("Title:"):
+            current["title"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Agency:"):
+            current["agency"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Close Date:"):
+            current["close_date"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Award Ceiling:"):
+            current["award_ceiling"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Fit:"):
+            current["fit"] = line.split(":", 1)[1].strip()
+    if current.get("id"):
+        grants.append(current)
+    return grants
+
+
+def _parse_compliance(compliance_text: str) -> dict:
+    """
+    Extracts structured compliance data from the compliance_synthesizer's text.
+    """
+    info = {
+        "raw": compliance_text,
+        "sam_status": "Unknown",
+        "legal_name": "",
+        "uei": "",
+        "expiry": "",
+    }
+    for line in compliance_text.split("\n"):
+        line = line.strip()
+        if "Registration Status:" in line:
+            info["sam_status"] = line.split(":", 1)[1].strip()
+        elif "Legal Name" in line and ":" in line:
+            info["legal_name"] = line.split(":", 1)[1].strip()
+        elif "UEI" in line and ":" in line:
+            info["uei"] = line.split(":", 1)[1].strip()
+        elif "Expir" in line and ":" in line:
+            info["expiry"] = line.split(":", 1)[1].strip()
+        elif "ELIGIBLE" in line:
+            if "NOT ELIGIBLE" in line:
+                info["sam_status"] = "Inactive"
+            else:
+                info["sam_status"] = "Active"
+    return info
+
+
 def human_review(state: AgentState) -> dict:
     """
-    Pauses execution and waits for human input via LangGraph interrupt().
-    The graph resumes when a human sends Command(resume=...) with their decision.
+    Pauses execution with structured data for the human to make real decisions.
+    The frontend renders grant cards with checkboxes, compliance status,
+    and a guidance notes field. The human's structured response shapes the report.
     """
+    grants = _parse_grants(state["research_results"])
+    compliance = _parse_compliance(state["compliance_results"])
+
     decision = interrupt({
-        "message": "Please review the grant research and compliance findings below.",
-        "research_summary": state["research_results"],
-        "compliance_summary": state["compliance_results"],
-        "instructions": "Respond with approve to generate the final report, or provide feedback to revise."
+        "type": "structured_review",
+        "grants": grants,
+        "compliance": compliance,
+        "research_raw": state["research_results"],
+        "compliance_raw": state["compliance_results"],
+        "instructions": "Select which grants to include in the final report, review compliance status, and add any guidance notes."
     })
     return {"human_decision": decision}
 
 
 def report_agent(state: AgentState) -> dict:
     """
-    Generates the final report from all accumulated state.
-    No hardcoded org names or grant IDs — everything derives from state.
-    Writes to final_report (signals completion to supervisor) and to
-    messages (keeps output visible in LangGraph Studio after the run ends).
+    Generates a professional executive briefing from all accumulated state.
+    The report includes hyperlinks, compliance analysis, and is structured
+    as a real deliverable an executive would review.
     """
-    prompt = (
-        f"Generate a professional federal grant opportunity report.\n\n"
-        f"Original Request: {state['user_request']}\n\n"
-        f"Research Findings:\n{state['research_results']}\n\n"
-        f"Compliance Analysis:\n{state['compliance_results']}\n\n"
-        f"Reviewer Notes: {state['human_decision']}\n\n"
-        f"Structure the report with:\n"
-        f"1. Executive Summary\n"
-        f"2. Recommended Grant Opportunities (with IDs, amounts, deadlines)\n"
-        f"3. Eligibility Status for Each Grant\n"
-        f"4. Required Next Steps\n"
-        f"5. Timeline to Application"
-    )
+    from datetime import date
+    today = date.today().strftime("%B %d, %Y")
+
+    prompt = f"""Generate a professional Federal Grant Opportunity Briefing in markdown format.
+
+Original Request: {state['user_request']}
+
+Research Findings:
+{state['research_results']}
+
+Compliance & Eligibility Analysis:
+{state['compliance_results']}
+
+Human Reviewer Input: {state['human_decision']}
+
+Format the report EXACTLY as follows using markdown. Include real hyperlinks to grants.gov for each grant ID using the format: [Grant Title](https://www.grants.gov/search-results-detail/GRANT_ID)
+
+---
+
+# Federal Grant Opportunity Briefing
+
+**Prepared for:** [extract org name from user request]
+**Date:** {today}
+**Classification:** For Internal Use Only
+
+---
+
+## Executive Summary
+
+[2-3 sentences summarizing the findings, number of opportunities identified, and compliance status]
+
+## Recommended Grant Opportunities
+
+For EACH grant found, create a subsection:
+
+### [Grant Title]
+
+- **Grant ID:** [ID] — [View on grants.gov](https://www.grants.gov/search-results-detail/GRANT_ID)
+- **Agency:** [agency name]
+- **Award Ceiling:** [amount]
+- **Close Date:** [date]
+- **Relevance:** [one sentence on why this matches the request]
+
+If the human reviewer deselected any grants or provided priority notes, reflect that here. Only include grants the reviewer selected. Note any priority guidance.
+
+## Compliance & Eligibility Analysis
+
+- **SAM.gov Registration:** [status — Active/Inactive/Not Found]
+- **UEI:** [UEI if found]
+- **Legal Entity Name:** [name from SAM.gov]
+- **Registration Expiry:** [date]
+- **Eligibility Determination:** [eligible or not, with explanation]
+- **Compliance Notes from Reviewer:** [any notes the human provided]
+
+## Risk Assessment
+
+Identify 2-3 specific risks based on the actual data:
+- Compliance risks (registration gaps, expiring status)
+- Timeline risks (close dates vs preparation time)
+- Capacity considerations
+
+## Recommended Next Steps
+
+Numbered action items with specific deadlines relative to grant close dates:
+1. [Action] — by [date]
+2. [Action] — by [date]
+3. [Action] — by [date]
+
+## Data Sources
+
+- grants.gov Search API (live data, queried {today})
+- SAM.gov Entity API (live registration check, queried {today})
+- Human review and prioritization input
+
+---
+
+IMPORTANT: Use ONLY data from the research and compliance findings above. Do not fabricate grant IDs, amounts, or dates. Every fact must trace back to the API results provided."""
+
     response = llm.invoke(
         [HumanMessage(content=prompt)],
         config={"run_name": "report_agent", "tags": ["report", "synthesis"], "metadata": {"agent": "report", "step": 5}},

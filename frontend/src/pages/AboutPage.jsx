@@ -39,9 +39,9 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* What We Built */}
+      {/* What I Built */}
       <section className="about-section">
-        <h2>What We Built</h2>
+        <h2>What I Built</h2>
         <p className="section-intro">
           A federal grant research agent that automates the workflow of finding relevant grants, verifying
           organizational compliance, and generating structured reports -- with mandatory human oversight.
@@ -130,7 +130,7 @@ export default function AboutPage() {
       <section className="about-section">
         <h2>Requirement Compliance</h2>
         <p className="section-intro">
-          How each task requirement maps to our implementation.
+          How each task requirement maps to the implementation.
         </p>
         <div className="compliance-table-wrap">
           <table className="compliance-table">
@@ -266,7 +266,7 @@ export default function AboutPage() {
           <Decision
             title="Deterministic supervisor over LLM-based routing"
             what="Pure Python if/else based on state field presence"
-            why="Routing is a solved problem here -- we know the exact sequence. Using an LLM for routing would add latency, cost, and unpredictability with zero benefit."
+            why="Routing is a solved problem here -- the exact sequence is known. Using an LLM for routing would add latency, cost, and unpredictability with zero benefit."
           />
           <Decision
             title="Linear agent flow over ReAct loops"
@@ -334,14 +334,14 @@ export default function AboutPage() {
             <h3>GitHub Repository</h3>
             <p>Full source code: agent, evaluation framework, frontend, deployment configs</p>
           </a>
-          <a href="https://smith.langchain.com" target="_blank" rel="noopener noreferrer" className="resource-card">
-            <h3>LangSmith Traces</h3>
-            <p>View agent traces, evaluation results, and observability data</p>
-          </a>
-          <a href={API_URL + "/docs"} target="_blank" rel="noopener noreferrer" className="resource-card">
+          <Link to="/traces" className="resource-card">
+            <h3>Agent Traces</h3>
+            <p>View agent traces, execution timelines, and observability data</p>
+          </Link>
+          <Link to="/api" className="resource-card">
             <h3>API Documentation</h3>
             <p>LangGraph API Server endpoints: threads, runs, streaming, state</p>
-          </a>
+          </Link>
           <Link to="/" className="resource-card">
             <h3>Try the Agent</h3>
             <p>Run a live grant research query and see the multi-agent system in action</p>

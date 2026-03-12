@@ -13,12 +13,15 @@ export default function Layout() {
             <NavLink to="/" end className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
               Agent
             </NavLink>
+            <NavLink to="/traces" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
+              Traces
+            </NavLink>
+            <NavLink to="/api" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
+              API
+            </NavLink>
             <NavLink to="/about" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
               About
             </NavLink>
-            <a href="https://smith.langchain.com" target="_blank" rel="noopener noreferrer" className="nav-link external">
-              LangSmith
-            </a>
             <a href="https://github.com/realmwell/innovatecorp-agent" target="_blank" rel="noopener noreferrer" className="nav-link external">
               GitHub
             </a>

@@ -30,12 +30,22 @@ const AGENT_ICONS = {
   report_agent: "doc",
 };
 
+const EXAMPLE_QUERIES = [
+  "Find renewable energy grants for a Pennsylvania nonprofit",
+  "Search for healthcare research grants for Johns Hopkins University",
+  "Find STEM education grants for a California community college",
+  "Search for cybersecurity grants for a small defense contractor",
+];
+
 export default function AgentPage() {
   const [request, setRequest] = useState("");
   const [status, setStatus] = useState("idle");
   const [currentAgent, setCurrentAgent] = useState("");
   const [agentLog, setAgentLog] = useState([]);
   const [reviewData, setReviewData] = useState(null);
+  const [grantSelections, setGrantSelections] = useState({});
+  const [guidanceNotes, setGuidanceNotes] = useState("");
+  const [complianceNotes, setComplianceNotes] = useState("");
   const [report, setReport] = useState("");
   const [error, setError] = useState("");
   const threadRef = useRef(null);
@@ -51,6 +61,9 @@ export default function AgentPage() {
     setAgentLog([]);
     setCurrentAgent("supervisor");
     setReviewData(null);
+    setGrantSelections({});
+    setGuidanceNotes("");
+    setComplianceNotes("");
     setReport("");
     setError("");
 
@@ -85,6 +98,14 @@ export default function AgentPage() {
       if (interrupt) {
         const interruptData = interrupt.interrupts[0].value;
         setReviewData(interruptData);
+        // Initialize grant selections — all selected by default
+        if (interruptData.grants) {
+          const selections = {};
+          interruptData.grants.forEach((g) => {
+            selections[g.id] = g.selected !== false;
+          });
+          setGrantSelections(selections);
+        }
         setStatus("review");
         addLog("Paused for human review", "human_review");
       } else {
@@ -100,10 +121,20 @@ export default function AgentPage() {
     }
   }
 
-  async function handleReview(decision) {
+  async function handleStructuredReview() {
+    const selectedGrants = Object.entries(grantSelections)
+      .filter(([, selected]) => selected)
+      .map(([id]) => id);
+
+    const decision = JSON.stringify({
+      selected_grants: selectedGrants,
+      guidance: guidanceNotes || "No additional guidance.",
+      compliance_notes: complianceNotes || "No compliance notes.",
+    });
+
     setStatus("running");
     setCurrentAgent("report_agent");
-    addLog("Human decision: " + decision, "human_review");
+    addLog("Human review submitted (" + selectedGrants.length + " grants selected)", "human_review");
 
     try {
       const stream = client.runs.stream(threadRef.current, ASSISTANT_ID, {
@@ -157,17 +188,24 @@ export default function AgentPage() {
     setError("");
     setAgentLog([]);
     setReviewData(null);
+    setGrantSelections({});
+    setGuidanceNotes("");
+    setComplianceNotes("");
     setReport("");
     threadRef.current = null;
+  }
+
+  function toggleGrant(id) {
+    setGrantSelections((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
   return (
     <div className="agent-page">
       <div className="page-hero">
-        <h1>Grant Research Agent</h1>
+        <h1>Federal Grant Research Agent</h1>
         <p className="hero-sub">
-          Multi-agent system that searches grants.gov, checks SAM.gov compliance,
-          and generates structured reports with human-in-the-loop review.
+          Describe what you need in plain language. This multi-agent system searches grants.gov for matching opportunities,
+          verifies organizational eligibility through SAM.gov, then generates a professional briefing after your review.
         </p>
       </div>
 
@@ -198,33 +236,104 @@ export default function AgentPage() {
         </button>
       </form>
 
-      {/* How It Works - shown when idle */}
+      {/* Landing content — shown when idle */}
       {status === "idle" && agentLog.length === 0 && (
-        <div className="how-it-works">
-          <h2>How It Works</h2>
-          <div className="steps-grid">
-            <div className="step-card">
-              <div className="step-num">1</div>
-              <h3>Describe Your Need</h3>
-              <p>Enter a grant research request in plain language. The supervisor routes it to specialized agents.</p>
-            </div>
-            <div className="step-card">
-              <div className="step-num">2</div>
-              <h3>Automated Research</h3>
-              <p>The research agent queries grants.gov and the compliance agent checks SAM.gov registration.</p>
-            </div>
-            <div className="step-card">
-              <div className="step-num">3</div>
-              <h3>Human Review</h3>
-              <p>The system pauses for your approval before generating the final report. You can request revisions.</p>
-            </div>
-            <div className="step-card">
-              <div className="step-num">4</div>
-              <h3>Structured Report</h3>
-              <p>A comprehensive report combining grant opportunities, eligibility analysis, and compliance findings.</p>
+        <>
+          {/* Example queries */}
+          <div className="examples-section">
+            <p className="examples-label">Try an example:</p>
+            <div className="examples-grid">
+              {EXAMPLE_QUERIES.map((q, i) => (
+                <button key={i} className="example-chip" onClick={() => setRequest(q)}>
+                  {q}
+                </button>
+              ))}
             </div>
           </div>
-        </div>
+
+          {/* How It Works */}
+          <div className="how-it-works">
+            <h2>How It Works</h2>
+            <div className="steps-grid">
+              <div className="step-card">
+                <div className="step-num">1</div>
+                <h3>Describe Your Need</h3>
+                <p>Enter a grant research request in plain language. Include the organization name and topic area.</p>
+              </div>
+              <div className="step-card">
+                <div className="step-num">2</div>
+                <h3>Automated Research</h3>
+                <p>The research agent queries grants.gov for matching opportunities. The compliance agent checks SAM.gov registration.</p>
+              </div>
+              <div className="step-card">
+                <div className="step-num">3</div>
+                <h3>Human Review</h3>
+                <p>Select which grants to include, review compliance findings, and add any guidance notes before the report is generated.</p>
+              </div>
+              <div className="step-card">
+                <div className="step-num">4</div>
+                <h3>Executive Briefing</h3>
+                <p>A professional report with grant details, compliance analysis, risk assessment, and recommended next steps.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Architecture mini-diagram */}
+          <div className="landing-arch">
+            <h2>Agent Architecture</h2>
+            <p className="section-intro">
+              A 9-node LangGraph StateGraph with deterministic routing. Each agent follows a three-step pattern:
+              LLM with tools bound, ToolNode executes the API call, then a synthesizer structures the results.
+            </p>
+            <div className="arch-mini">
+              <div className="arch-mini-row">
+                <span className="arch-mini-node arch-mini-input">User Request</span>
+                <span className="arch-mini-arrow" />
+                <span className="arch-mini-node arch-mini-router">Supervisor</span>
+              </div>
+              <div className="arch-mini-row">
+                <span className="arch-mini-arrow arch-mini-arrow-down" />
+              </div>
+              <div className="arch-mini-row">
+                <span className="arch-mini-node arch-mini-agent">Research Agent</span>
+                <span className="arch-mini-arrow" />
+                <span className="arch-mini-node arch-mini-tool">grants.gov API</span>
+                <span className="arch-mini-arrow" />
+                <span className="arch-mini-node arch-mini-synth">Synthesizer</span>
+              </div>
+              <div className="arch-mini-row">
+                <span className="arch-mini-arrow arch-mini-arrow-down" />
+              </div>
+              <div className="arch-mini-row">
+                <span className="arch-mini-node arch-mini-agent">Compliance Agent</span>
+                <span className="arch-mini-arrow" />
+                <span className="arch-mini-node arch-mini-tool">SAM.gov API</span>
+                <span className="arch-mini-arrow" />
+                <span className="arch-mini-node arch-mini-synth">Synthesizer</span>
+              </div>
+              <div className="arch-mini-row">
+                <span className="arch-mini-arrow arch-mini-arrow-down" />
+              </div>
+              <div className="arch-mini-row">
+                <span className="arch-mini-node arch-mini-human">Human Review</span>
+                <span className="arch-mini-arrow" />
+                <span className="arch-mini-node arch-mini-agent">Report Agent</span>
+                <span className="arch-mini-arrow" />
+                <span className="arch-mini-node arch-mini-output">Final Report</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Tech badges */}
+          <div className="tech-badges">
+            <span className="tech-badge tech-langgraph">LangGraph</span>
+            <span className="tech-badge tech-langchain">LangChain</span>
+            <span className="tech-badge tech-langsmith">LangSmith</span>
+            <span className="tech-badge tech-bedrock">AWS Bedrock</span>
+            <span className="tech-badge tech-grants">grants.gov API</span>
+            <span className="tech-badge tech-sam">SAM.gov API</span>
+          </div>
+        </>
       )}
 
       {/* Agent Progress */}
@@ -256,7 +365,7 @@ export default function AgentPage() {
         </div>
       )}
 
-      {/* Human Review */}
+      {/* Structured Human Review */}
       {status === "review" && reviewData && (
         <div className="review-section">
           <div className="review-header">
@@ -265,43 +374,175 @@ export default function AgentPage() {
             </svg>
             <div>
               <h2>Human Review Required</h2>
-              <p>{reviewData.instructions || "Review the findings below and approve or request revisions."}</p>
+              <p>{reviewData.instructions || "Review the findings below. Select grants, review compliance, and add any notes."}</p>
             </div>
           </div>
 
-          <div className="review-panels">
-            <div className="review-panel">
-              <h3>Research Findings</h3>
-              <pre>{reviewData.research_summary}</pre>
+          {/* Grant Selection Cards */}
+          {reviewData.grants && reviewData.grants.length > 0 && (
+            <div className="review-grants">
+              <h3 className="review-section-title">Grant Opportunities</h3>
+              <p className="review-section-desc">Select which grants to include in the final report.</p>
+              <div className="grant-cards">
+                {reviewData.grants.map((grant) => (
+                  <div
+                    key={grant.id}
+                    className={"grant-card" + (grantSelections[grant.id] ? " selected" : "")}
+                    onClick={() => toggleGrant(grant.id)}
+                  >
+                    <div className="grant-card-header">
+                      <label className="grant-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={!!grantSelections[grant.id]}
+                          onChange={() => toggleGrant(grant.id)}
+                        />
+                        <span className="checkmark" />
+                      </label>
+                      <div className="grant-card-title">
+                        <span className="grant-id">Grant #{grant.id}</span>
+                        <h4>{grant.title || "Untitled Grant"}</h4>
+                      </div>
+                    </div>
+                    <div className="grant-card-details">
+                      {grant.agency && (
+                        <div className="grant-detail">
+                          <span className="grant-detail-label">Agency</span>
+                          <span className="grant-detail-value">{grant.agency}</span>
+                        </div>
+                      )}
+                      {grant.award_ceiling && (
+                        <div className="grant-detail">
+                          <span className="grant-detail-label">Award Ceiling</span>
+                          <span className="grant-detail-value">{grant.award_ceiling}</span>
+                        </div>
+                      )}
+                      {grant.close_date && (
+                        <div className="grant-detail">
+                          <span className="grant-detail-label">Close Date</span>
+                          <span className="grant-detail-value">{grant.close_date}</span>
+                        </div>
+                      )}
+                      {grant.fit && (
+                        <div className="grant-detail grant-detail-full">
+                          <span className="grant-detail-label">Fit</span>
+                          <span className="grant-detail-value">{grant.fit}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="review-panel">
-              <h3>Compliance Analysis</h3>
-              <pre>{reviewData.compliance_summary}</pre>
+          )}
+
+          {/* Compliance Status */}
+          {reviewData.compliance && (
+            <div className="review-compliance">
+              <h3 className="review-section-title">Compliance Status</h3>
+              <div className="compliance-status-card">
+                <div className="compliance-status-row">
+                  <span className="compliance-label">SAM.gov Status</span>
+                  <span className={"compliance-value " + (
+                    reviewData.compliance.sam_status === "Active" ? "status-active" :
+                    reviewData.compliance.sam_status === "Inactive" ? "status-inactive" : "status-unknown"
+                  )}>
+                    {reviewData.compliance.sam_status || "Unknown"}
+                  </span>
+                </div>
+                {reviewData.compliance.legal_name && (
+                  <div className="compliance-status-row">
+                    <span className="compliance-label">Legal Name</span>
+                    <span className="compliance-value">{reviewData.compliance.legal_name}</span>
+                  </div>
+                )}
+                {reviewData.compliance.uei && (
+                  <div className="compliance-status-row">
+                    <span className="compliance-label">UEI</span>
+                    <span className="compliance-value compliance-mono">{reviewData.compliance.uei}</span>
+                  </div>
+                )}
+                {reviewData.compliance.expiry && (
+                  <div className="compliance-status-row">
+                    <span className="compliance-label">Registration Expiry</span>
+                    <span className="compliance-value">{reviewData.compliance.expiry}</span>
+                  </div>
+                )}
+              </div>
+              <textarea
+                className="review-textarea"
+                placeholder="Add any compliance notes or concerns..."
+                value={complianceNotes}
+                onChange={(e) => setComplianceNotes(e.target.value)}
+                rows={2}
+              />
             </div>
+          )}
+
+          {/* Raw data (collapsed) */}
+          {(reviewData.research_raw || reviewData.compliance_raw) && (
+            <details className="review-raw-details">
+              <summary className="review-raw-summary">View raw agent output</summary>
+              <div className="review-panels">
+                {reviewData.research_raw && (
+                  <div className="review-panel">
+                    <h3>Research (Raw)</h3>
+                    <pre>{reviewData.research_raw}</pre>
+                  </div>
+                )}
+                {reviewData.compliance_raw && (
+                  <div className="review-panel">
+                    <h3>Compliance (Raw)</h3>
+                    <pre>{reviewData.compliance_raw}</pre>
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
+
+          {/* Guidance */}
+          <div className="review-guidance">
+            <h3 className="review-section-title">Guidance Notes</h3>
+            <textarea
+              className="review-textarea"
+              placeholder="Any additional direction for the report? e.g., 'Focus on grants under $500K' or 'Prioritize DOE opportunities'"
+              value={guidanceNotes}
+              onChange={(e) => setGuidanceNotes(e.target.value)}
+              rows={3}
+            />
           </div>
 
+          {/* Submit */}
           <div className="review-actions">
-            <button className="btn btn-success" onClick={() => handleReview("approve")}>
-              Approve & Generate Report
+            <button className="btn btn-success" onClick={handleStructuredReview}>
+              Generate Report ({Object.values(grantSelections).filter(Boolean).length} grants selected)
             </button>
-            <button
-              className="btn btn-outline-warn"
-              onClick={() => handleReview("Please broaden the search to include more agencies")}
-            >
-              Request Revision
+            <button className="btn btn-outline-warn" onClick={handleReset}>
+              Start Over
             </button>
           </div>
         </div>
       )}
 
-      {/* Final Report */}
+      {/* Final Report — rendered as markdown */}
       {status === "done" && report && (
         <div className="report-section">
           <div className="report-header">
             <h2>Final Report</h2>
-            <span className="badge badge-success">Complete</span>
+            <div className="report-actions">
+              <button className="btn btn-sm btn-outline" onClick={() => {
+                navigator.clipboard.writeText(report);
+              }}>
+                Copy
+              </button>
+              <button className="btn btn-sm btn-outline" onClick={handleReset}>
+                New Search
+              </button>
+            </div>
           </div>
-          <div className="report-content">{report}</div>
+          <div className="report-content">
+            <MarkdownReport text={report} />
+          </div>
         </div>
       )}
 
@@ -317,4 +558,126 @@ export default function AgentPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Lightweight markdown renderer for the report.
+ * Handles headings, bold, links, lists, and horizontal rules.
+ * No dependencies — just regex transforms.
+ */
+function MarkdownReport({ text }) {
+  if (!text) return null;
+
+  const lines = text.split("\n");
+  const elements = [];
+  let inList = false;
+  let listItems = [];
+
+  function flushList() {
+    if (listItems.length > 0) {
+      elements.push(
+        <ul key={"list-" + elements.length} className="md-list">
+          {listItems.map((item, i) => (
+            <li key={i}>{renderInline(item)}</li>
+          ))}
+        </ul>
+      );
+      listItems = [];
+      inList = false;
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Horizontal rule
+    if (/^---+$/.test(line.trim())) {
+      flushList();
+      elements.push(<hr key={"hr-" + i} className="md-hr" />);
+      continue;
+    }
+
+    // Headings
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      flushList();
+      const level = headingMatch[1].length;
+      const Tag = "h" + level;
+      elements.push(<Tag key={"h-" + i} className={"md-h" + level}>{renderInline(headingMatch[2])}</Tag>);
+      continue;
+    }
+
+    // List items
+    const listMatch = line.match(/^\s*[-*]\s+(.+)$/);
+    const numListMatch = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (listMatch || numListMatch) {
+      inList = true;
+      listItems.push((listMatch || numListMatch)[1]);
+      continue;
+    }
+
+    // Empty line
+    if (line.trim() === "") {
+      flushList();
+      continue;
+    }
+
+    // Regular paragraph
+    flushList();
+    elements.push(<p key={"p-" + i} className="md-p">{renderInline(line)}</p>);
+  }
+  flushList();
+
+  return <div className="md-report">{elements}</div>;
+}
+
+function renderInline(text) {
+  // Split by markdown patterns and render inline elements
+  const parts = [];
+  let remaining = text;
+  let key = 0;
+
+  while (remaining.length > 0) {
+    // Bold
+    const boldMatch = remaining.match(/\*\*(.+?)\*\*/);
+    // Link
+    const linkMatch = remaining.match(/\[([^\]]+)\]\(([^)]+)\)/);
+
+    // Find earliest match
+    let earliest = null;
+    let earliestIdx = remaining.length;
+
+    if (boldMatch && boldMatch.index < earliestIdx) {
+      earliest = "bold";
+      earliestIdx = boldMatch.index;
+    }
+    if (linkMatch && linkMatch.index < earliestIdx) {
+      earliest = "link";
+      earliestIdx = linkMatch.index;
+    }
+
+    if (!earliest) {
+      parts.push(remaining);
+      break;
+    }
+
+    // Add text before match
+    if (earliestIdx > 0) {
+      parts.push(remaining.slice(0, earliestIdx));
+    }
+
+    if (earliest === "bold") {
+      parts.push(<strong key={key++}>{boldMatch[1]}</strong>);
+      remaining = remaining.slice(earliestIdx + boldMatch[0].length);
+    } else if (earliest === "link") {
+      parts.push(
+        <a key={key++} href={linkMatch[2]} target="_blank" rel="noopener noreferrer" className="md-link">
+          {linkMatch[1]}
+        </a>
+      );
+      remaining = remaining.slice(earliestIdx + linkMatch[0].length);
+    }
+  }
+
+  return parts;
 }
