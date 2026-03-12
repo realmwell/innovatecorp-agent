@@ -65,8 +65,25 @@ cd frontend && npm install && npm run dev
 
 ## Deployment
 
-- **Backend**: Fly.io (Docker, scale-to-zero)
-- **Frontend**: Vercel (static CDN)
+| Component | Platform | URL |
+|-----------|----------|-----|
+| **Backend** | Fly.io (Docker, scale-to-zero) | https://innovatecorp-agent.fly.dev |
+| **Frontend** | AWS CloudFront + S3 | https://d3pwj8nk8wp62b.cloudfront.net |
+
+### Deploy Backend (Fly.io)
+
+```bash
+flyctl deploy --remote-only
+```
+
+### Deploy Frontend (CloudFront + S3)
+
+```bash
+cd frontend
+VITE_API_URL=https://innovatecorp-agent.fly.dev npm run build
+aws s3 sync dist/ s3://innovatecorp-frontend/ --delete
+aws cloudfront create-invalidation --distribution-id EVU0ZAHIJ13GJ --paths "/*"
+```
 
 ## Evaluation
 
